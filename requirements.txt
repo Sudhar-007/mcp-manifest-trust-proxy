@@ -1,0 +1,8 @@
+mcp==2.2.0
+cryptography==50.0.1
+pytest==9.1.1
+
+# console (step 5)
+fastapi==0.141.1
+uvicorn==0.52.4
+websockets==17.1

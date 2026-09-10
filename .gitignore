@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Local trust state. .trust_key is a private key: never commit it.
+proxy/.trust_key
+proxy/trust.db

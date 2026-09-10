@@ -1,0 +1,7 @@
+{
+  "servers": [
+    { "name": "calc", "command": "python", "args": ["servers/calc_server.py"] },
+    { "name": "email", "command": "python", "args": ["servers/email_server.py"] },
+    { "name": "docs", "command": "python", "args": ["servers/docs_server.py"] }
+  ]
+}

@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MCP trust proxy - console</title>
+<style>
+  /* No transitions, no animations: nothing that can stutter on a projector. */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 24px 40px;
+    font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
+    color: #14181f; background: #f6f7f9;
+  }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  h2 {
+    font-size: 13px; letter-spacing: .09em; text-transform: uppercase;
+    color: #5a6472; margin: 26px 0 8px; border-bottom: 1px solid #d8dde4; padding-bottom: 5px;
+  }
+  .sub { color: #5a6472; font-size: 13px; }
+  .mono { font-family: Consolas, "Courier New", monospace; }
+  .muted { color: #6b7583; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+
+  #link { font-size: 13px; padding: 4px 10px; border-radius: 4px; border: 1px solid; }
+  .link-live     { color: #12603a; background: #e3f5eb; border-color: #9dd6b8; }
+  .link-polling  { color: #7a4c00; background: #fdf1dc; border-color: #e6c485; }
+  .link-offline  { color: #7a1c1c; background: #fbe6e6; border-color: #e4a6a6; }
+
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #e6e9ee; vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #5a6472; background: #eef1f5; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 12px; font-weight: 600; border: 1px solid; white-space: nowrap;
+  }
+  /* Four visually distinct states. Suspended and quarantined are different
+     mechanisms, so they never share a colour. */
+  .pill-active            { color: #12603a; background: #e3f5eb; border-color: #9dd6b8; }
+  .pill-suspended         { color: #7a4c00; background: #fdf1dc; border-color: #e6c485; }
+  .pill-quarantined       { color: #7a1c1c; background: #fbe6e6; border-color: #e4a6a6; }
+  .pill-pending_approval  { color: #123c7a; background: #e5eefb; border-color: #a5c2e8; }
+  .why { font-size: 12px; color: #5a6472; margin-left: 8px; }
+
+  .card { background: #fff; border: 1px solid #e6e9ee; border-left: 4px solid #b53535; padding: 12px 14px; margin-bottom: 12px; }
+  .card h3 { margin: 0 0 8px; font-size: 15px; }
+  .bucket { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 700;
+            background: #14181f; color: #fff; margin-left: 8px; }
+  .field { margin: 9px 0 0; }
+  .field-label { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #5a6472; margin-bottom: 3px; }
+  .box { background: #fbfcfd; border: 1px solid #e6e9ee; padding: 8px 10px; white-space: pre-wrap;
+         word-break: break-word; font-family: Consolas, "Courier New", monospace; font-size: 13px; }
+  mark { background: #ffd5d5; border-bottom: 2px solid #b53535; color: #14181f; padding: 0 1px; }
+  ins { background: #dcf3e5; text-decoration: none; border-bottom: 2px solid #2e8b57; }
+  del { background: #f6dede; color: #7a1c1c; }
+  ul.findings { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+
+  button {
+    font: inherit; padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    border: 1px solid #1c6b45; background: #1c6b45; color: #fff; font-weight: 600;
+  }
+  button[disabled] { cursor: not-allowed; background: #d3d8de; border-color: #c2c8d0; color: #6b7583; }
+  .blocked-reason { font-size: 13px; color: #7a1c1c; margin-top: 6px; }
+  .approve-row { margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+  #timeline td:nth-child(1) { white-space: nowrap; color: #5a6472; font-size: 12px; }
+  #timeline td:nth-child(5) { font-size: 13px; word-break: break-word; }
+  .empty { background: #fff; border: 1px dashed #c8cfd8; padding: 14px; color: #5a6472; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>MCP trust proxy</h1>
+    <div class="sub" id="summary">Loading&hellip;</div>
+  </div>
+  <div id="link" class="link-offline">connecting&hellip;</div>
+</header>
+
+<h2>Servers</h2>
+<div id="servers"></div>
+
+<div id="review-region" hidden>
+  <h2>Pending review</h2>
+  <div id="review"></div>
+</div>
+
+<h2>Event timeline</h2>
+<div id="timeline-wrap"></div>
+
+<script>
+"use strict";
+
+var state = null;
+var events = [];
+var socket = null;
+var pollTimer = null;
+var reconnectTimer = null;
+
+function esc(value) {
+  return String(value === null || value === undefined ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/* Wrap each finding's exact span in <mark>. Findings are sorted by start and
+   any overlap is skipped, so the text is never duplicated or reordered. */
+function highlight(text, findings) {
+  if (!findings || !findings.length) { return esc(text); }
+  var sorted = findings.slice().sort(function (a, b) { return a.start - b.start; });
+  var out = "", cursor = 0;
+  for (var i = 0; i < sorted.length; i++) {
+    var f = sorted[i];
+    if (f.start < cursor || f.end > text.length) { continue; }
+    out += esc(text.slice(cursor, f.start));
+    out += '<mark title="' + esc(f.describe) + '">' + esc(text.slice(f.start, f.end)) + "</mark>";
+    cursor = f.end;
+  }
+  return out + esc(text.slice(cursor));
+}
+
+/* word_diff() emits [-removed-] and {+added+}. */
+function renderDiff(diff) {
+  if (!diff) { return '<span class="muted">(no description diff)</span>'; }
+  return esc(diff)
+    .replace(/\[-([\s\S]*?)-\]/g, "<del>$1</del>")
+    .replace(/\{\+([\s\S]*?)\+\}/g, "<ins>$1</ins>");
+}
+
+function pillHtml(pill) {
+  return '<span class="pill pill-' + esc(pill[0]) + '">' + esc(pill[0]) + "</span>";
+}
+
+function renderServers() {
+  var host = document.getElementById("servers");
+  var servers = (state && state.servers) || [];
+  if (!servers.length) {
+    host.innerHTML = '<div class="empty">No servers pinned yet. Start the proxy with '
+      + '<span class="mono">python -m proxy</span> (or run the demo client) and this fills in.</div>';
+    return;
+  }
+  var rows = "";
+  for (var s = 0; s < servers.length; s++) {
+    var server = servers[s];
+    var root = server.pinned_root ? server.pinned_root.slice(0, 16) : "(not pinned)";
+    for (var t = 0; t < server.tools.length; t++) {
+      var tool = server.tools[t];
+      var pills = "";
+      for (var p = 0; p < tool.pills.length; p++) {
+        pills += pillHtml(tool.pills[p]) + '<span class="why">' + esc(tool.pills[p][1]) + "</span>";
+        if (p < tool.pills.length - 1) { pills += "<br>"; }
+      }
+      rows += "<tr><td>" + esc(server.name) + '</td><td class="mono">' + esc(tool.name)
+        + "</td><td>" + pills + '</td><td class="mono muted">' + esc(root) + "</td></tr>";
+    }
+  }
+  host.innerHTML = '<table><thead><tr><th>Server</th><th>Tool</th><th>Status</th>'
+    + "<th>Pinned root</th></tr></thead><tbody>" + rows + "</tbody></table>";
+}
+
+function renderReview() {
+  var region = document.getElementById("review-region");
+  var host = document.getElementById("review");
+  var items = [];
+  var servers = (state && state.servers) || [];
+  for (var s = 0; s < servers.length; s++) {
+    for (var t = 0; t < servers[s].tools.length; t++) {
+      if (servers[s].tools[t].needs_review) {
+        items.push({ server: servers[s].name, tool: servers[s].tools[t] });
+      }
+    }
+  }
+  if (!items.length) { region.hidden = true; host.innerHTML = ""; return; }
+  region.hidden = false;
+
+  var html = "";
+  for (var i = 0; i < items.length; i++) {
+    var server = items[i].server, tool = items[i].tool;
+    var findings = tool.findings || [];
+    var id = server + "/" + tool.name;
+
+    html += '<div class="card">';
+    html += "<h3>" + esc(server) + '<span class="mono">__' + esc(tool.name) + "</span>";
+    if (tool.bucket) { html += '<span class="bucket">' + esc(tool.bucket) + "</span>"; }
+    html += "</h3>";
+
+    if (tool.bucket_why) {
+      html += '<div class="field"><div class="field-label">Reason</div><div>' + esc(tool.bucket_why) + "</div></div>";
+    }
+    if (findings.length) {
+      html += '<div class="field"><div class="field-label">Live description (matched spans highlighted)</div>';
+      html += '<div class="box">' + highlight(tool.description, findings) + "</div>";
+      html += '<ul class="findings">';
+      for (var f = 0; f < findings.length; f++) { html += "<li>" + esc(findings[f].describe) + "</li>"; }
+      html += "</ul></div>";
+    }
+    html += '<div class="field"><div class="field-label">Word-level diff against the pinned description</div>';
+    html += '<div class="box">' + renderDiff(tool.diff) + "</div></div>";
+
+    html += '<div class="approve-row">';
+    if (findings.length) {
+      html += "<button disabled>Approve</button>";
+      html += '<span class="blocked-reason">Disabled: the description still has '
+        + findings.length + " description-guard finding" + (findings.length === 1 ? "" : "s")
+        + ". Approving would pin the injected instruction as trusted.</span>";
+    } else if (!tool.definition) {
+      html += "<button disabled>Approve</button>";
+      html += '<span class="blocked-reason">Disabled: the server no longer offers this tool, '
+        + "so there is no current definition to pin.</span>";
+    } else {
+      html += '<button onclick="approve(this, ' + JSON.stringify(server).replace(/"/g, "&quot;")
+        + ", " + JSON.stringify(tool.name).replace(/"/g, "&quot;") + ')">Approve</button>';
+      html += '<span class="muted">Re-pins this definition and re-signs the server root.</span>';
+    }
+    html += '<span class="blocked-reason" id="err-' + esc(id).replace(/[^a-zA-Z0-9_-]/g, "_") + '"></span>';
+    html += "</div></div>";
+  }
+  host.innerHTML = html;
+}
+
+function renderTimeline() {
+  var host = document.getElementById("timeline-wrap");
+  if (!events.length) {
+    host.innerHTML = '<div class="empty">No audit rows yet.</div>';
+    return;
+  }
+  var rows = "";
+  for (var i = 0; i < events.length; i++) {
+    var e = events[i];
+    rows += "<tr><td>" + esc(e.timestamp) + "</td><td>" + esc(e.server || "-")
+      + '</td><td class="mono">' + esc(e.tool || "-") + '</td><td class="mono">' + esc(e.event)
+      + "</td><td>" + esc(e.detail) + "</td></tr>";
+  }
+  host.innerHTML = '<table id="timeline"><thead><tr><th>Time (UTC)</th><th>Server</th><th>Tool</th>'
+    + "<th>Event</th><th>Detail</th></tr></thead><tbody>" + rows + "</tbody></table>";
+}
+
+function renderSummary() {
+  var servers = (state && state.servers) || [];
+  var tools = 0, review = 0;
+  for (var s = 0; s < servers.length; s++) {
+    tools += servers[s].tools.length;
+    for (var t = 0; t < servers[s].tools.length; t++) {
+      if (servers[s].tools[t].needs_review) { review++; }
+    }
+  }
+  var source = state && state.connected
+    ? "live from the proxy"
+    : "read from trust.db - the proxy is not running";
+  document.getElementById("summary").textContent =
+    servers.length + " server" + (servers.length === 1 ? "" : "s") + ", " + tools + " tool"
+    + (tools === 1 ? "" : "s") + ", " + review + " awaiting review - " + source;
+}
+
+function renderAll() { renderSummary(); renderServers(); renderReview(); renderTimeline(); }
+
+function setLink(cls, text) {
+  var el = document.getElementById("link");
+  el.className = cls;
+  el.textContent = text;
+}
+
+function fetchState() {
+  return fetch("/api/state").then(function (r) { return r.json(); })
+    .then(function (data) { state = data; renderSummary(); renderServers(); renderReview(); })
+    .catch(function () { /* keep the last good render; never blank the screen */ });
+}
+
+function fetchEvents() {
+  return fetch("/api/events").then(function (r) { return r.json(); })
+    .then(function (data) { events = data.events || []; renderTimeline(); })
+    .catch(function () { });
+}
+
+function mergeEvents(incoming) {
+  if (!incoming || !incoming.length) { return; }
+  var seen = {};
+  var merged = incoming.concat(events);
+  var unique = [];
+  for (var i = 0; i < merged.length; i++) {
+    if (!seen[merged[i].id]) { seen[merged[i].id] = true; unique.push(merged[i]); }
+  }
+  unique.sort(function (a, b) { return b.id - a.id; });
+  events = unique.slice(0, 200);
+  renderTimeline();
+}
+
+function startPolling() {
+  if (pollTimer) { return; }
+  setLink("link-polling", "polling (websocket down)");
+  pollTimer = setInterval(function () { fetchState(); fetchEvents(); }, 2000);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function connect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  try {
+    socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  } catch (err) { startPolling(); return; }
+
+  socket.onopen = function () { stopPolling(); setLink("link-live", "live"); fetchState(); };
+  socket.onmessage = function (event) {
+    var message = JSON.parse(event.data);
+    if (message.type === "events") { mergeEvents(message.events); }
+    else if (message.type === "state") { fetchState(); }
+  };
+  socket.onclose = function () {
+    startPolling();
+    if (!reconnectTimer) { reconnectTimer = setTimeout(connect, 5000); }
+  };
+  socket.onerror = function () { try { socket.close(); } catch (err) { } };
+}
+
+function approve(button, server, tool) {
+  var slot = document.getElementById("err-" + (server + "/" + tool).replace(/[^a-zA-Z0-9_-]/g, "_"));
+  button.disabled = true;
+  button.textContent = "Approving…";
+  fetch("/api/approve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ server: server, tool: tool })
+  }).then(function (response) {
+    return response.json().then(function (data) { return { ok: response.ok, data: data }; });
+  }).then(function (result) {
+    if (!result.ok) {
+      var message = result.data.error || "Approve failed.";
+      if (result.data.findings) { message += " (" + result.data.findings.join("; ") + ")"; }
+      if (slot) { slot.textContent = message; }
+      button.disabled = false;
+      button.textContent = "Approve";
+      return;
+    }
+    return fetchState().then(fetchEvents);
+  }).catch(function () {
+    if (slot) { slot.textContent = "Approve failed: the console is unreachable."; }
+    button.disabled = false;
+    button.textContent = "Approve";
+  });
+}
+
+renderAll();
+fetchState();
+fetchEvents();
+connect();
+</script>
+</body>
+</html>
