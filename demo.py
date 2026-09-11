@@ -31,11 +31,11 @@ ATTACKS = ["legitimate_update", "rug_pull", "tool_shadowing", "tool_poisoning", 
 SCENES: list[tuple[str, str | None, str]] = [
     ("Reset and first run", None, "FIRST_RUN: three servers pinned, every tool active"),
     ("Clean reconnect", None, "CLEAN: live roots match the signed pins, nothing blocked"),
-    ("A legitimate update", "legitimate_update", "DRIFT -> COSMETIC, no findings, Approve enabled"),
     ("Rug pull", "rug_pull", "DRIFT -> suspended, diff shown; neither detector fires"),
     ("Tool shadowing", "tool_shadowing", "CROSS_SERVER: calc's description names email's send_email"),
     ("Tool poisoning", "tool_poisoning", "INSTRUCTION: quarantined, hidden from the client"),
     ("Poisoned document", "poisoned_document", "manifest CLEAN; only the output firewall sees it"),
+    ("A legitimate update", "legitimate_update", "DRIFT -> COSMETIC, no findings, Approve enabled"),
 ]
 
 

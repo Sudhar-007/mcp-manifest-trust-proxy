@@ -161,19 +161,19 @@ subprocess stops the run and names the scene.
 |---|---|---|
 | 0 | Reset and first run | `FIRST_RUN` — three servers pinned, all tools active |
 | 1 | Clean reconnect | `CLEAN` — roots match, nothing blocked |
-| 2 | A legitimate update | `DRIFT` → `COSMETIC`, no findings, **Approve enabled** |
-| 3 | Rug pull | `DRIFT` → suspended, diff shown, neither detector fires |
-| 4 | Tool shadowing | `CROSS_SERVER` — calc's description names `send_email` |
-| 5 | Tool poisoning | `INSTRUCTION` — quarantined, hidden from the client |
-| 6 | Poisoned document | manifest `CLEAN`; only the firewall sees it — 5 findings |
+| 2 | Rug pull | `DRIFT` → suspended, diff shown, neither detector fires |
+| 3 | Tool shadowing | `CROSS_SERVER` — calc's description names `send_email` |
+| 4 | Tool poisoning | `INSTRUCTION` — quarantined, hidden from the client |
+| 5 | Poisoned document | manifest `CLEAN`; only the firewall sees it — 5 findings |
+| 6 | A legitimate update | `DRIFT` → `COSMETIC`, no findings, **Approve enabled** |
 
-**Scene 2 makes the rest mean something.** A guard that blocks everything is
-useless. A real wording fix must be approvable in one click; an injected
-instruction must not be approvable at all.
-
-**Scene 6 is the one to dwell on.** Pinning says `CLEAN` and the guard says
+**Scene 5 is the one to dwell on.** Pinning says `CLEAN` and the guard says
 nothing, because the manifest genuinely did not change. The attack is in the
 document the tool returned. Only the firewall sees it.
+
+**Scene 6 makes the rest mean something.** A guard that blocks everything is
+useless. Ending here answers the obvious objection — a real wording fix is
+still approvable in one click, while an injected instruction never is.
 
 ---
 
