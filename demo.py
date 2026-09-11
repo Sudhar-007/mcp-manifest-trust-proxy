@@ -47,21 +47,25 @@ class SceneFailed(Exception):
         self.code = code
 
 
-def run(command: list[str], scene: int) -> str:
-    """Run a subprocess, capturing output. Any non-zero exit stops the demo."""
+def run(command: list[str], scene: int, *, tolerant: bool = False) -> str:
+    """Run a subprocess, capturing output. Any non-zero exit stops the demo.
+
+    `tolerant` is only for the first reset pass, where a restore is *expected*
+    to fail; see reset().
+    """
     result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
     output = (result.stdout or "") + (result.stderr or "")
-    if result.returncode != 0:
+    if result.returncode != 0 and not tolerant:
         sys.stdout.write(output)
         raise SceneFailed(scene, command, result.returncode)
     return output
 
 
-def attack(name: str, scene: int, *, restore: bool = False) -> None:
+def attack(name: str, scene: int, *, restore: bool = False, tolerant: bool = False) -> None:
     command = [PYTHON, str(ROOT / "attacks" / f"{name}.py")]
     if restore:
         command.append("--restore")
-    run(command, scene)  # output discarded: the banner is what belongs on screen
+    run(command, scene, tolerant=tolerant)  # output discarded: the banner belongs on screen
 
 
 def demo_client(scene: int) -> str:
@@ -69,10 +73,25 @@ def demo_client(scene: int) -> str:
 
 
 def reset(scene: int = 0) -> None:
+    """Clear the trust store and put every attacked file back.
+
+    Two passes, because several scripts edit the same `add` docstring. A
+    restore whose own payload is not present cannot find its anchor and exits
+    non-zero -- so if rug_pull is the one applied, legitimate_update's restore
+    fails first and would abort the reset before rug_pull's ever ran.
+
+    Pass 1 therefore ignores exit codes: whichever attack is actually applied
+    is undone by its own script, and the rest are harmless no-ops. Pass 2 runs
+    strict, so every script must now report "already restored". That proves the
+    tree is clean using each attack's own knowledge of its payload, rather than
+    duplicating the payload text here.
+    """
     for path in (ROOT / "proxy" / "trust.db", ROOT / "proxy" / ".trust_key"):
         path.unlink(missing_ok=True)
     for name in ATTACKS:
-        attack(name, scene, restore=True)
+        attack(name, scene, restore=True, tolerant=True)
+    for name in ATTACKS:
+        attack(name, scene, restore=True)  # strict: verifies the tree really is clean
 
 
 def banner(number: int, title: str) -> None:
